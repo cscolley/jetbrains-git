@@ -1,4 +1,4 @@
-# AGENTS.md — JetBrains Git Control
+# AGENTS.md — JetBrains Git
 
 AI agents working on this repo must read this file first.
 
@@ -170,6 +170,16 @@ Mirrors the IDEA New Worktree dialog: a collapsible **Copy local project setup**
 **Run setup script.** The user picks the script with the folder-icon button; the IDE runs it once, with the new worktree path as its only argument and as the working directory, **before** the project opens. A failing script never removes the worktree and never fails the creation — the result carries `scriptError` and the dialog reports it while still opening the project. `runSetupScript` distinguishes "never started" (`ENOENT`/`EACCES`, e.g. missing execute bit) from "ran and failed", because the two need different messages.
 
 Both choices plus the script path are remembered per workspace in `localStorage`; nothing is written to settings.
+
+### Changelists (overlay model)
+
+An overlay on top of the index, **not** a replacement for it: the Staged group, Unversioned Files and Merge Conflicts behave exactly as without changelists, and only tracked, unstaged, non-conflicted changes belong to a list (`isListable` host-side, `isMovable` in the webview). Do not add an exclusive mode that hides the index.
+
+- Assignments live host-side in `jgc-changelists.json` under `git rev-parse --git-path` (one per worktree, never in the repo). `getWorkingTreeChanges` and `getChangesViewFiles` annotate each file with `changelist`; the webview never computes membership itself.
+- Any host path that makes changes vanish for good must forget them: commit paths go through `withChangelistCleanup`, rollbacks call `forgetResolvedPaths`. Shelve and stash deliberately do not — `reconcile` keeps an assignment for `STALE_AFTER_DAYS` (7) so a restored file returns to its list.
+- Group with `groupByChangelist` (Commit panel) / `groupFilesByChangelist` (Changes view). They share one visibility rule: the default list shows when it has files, or when it is active **and** a named list exists; named lists always show, even empty, because they are the only drop target.
+- Drag and drop carries paths under `CHANGELIST_DRAG_TYPE`. Only rows where `isMovable(file)` get an `onDragStart`; groups accept only drags that carry that type.
+- Mutating handlers broadcast `commitStateChanged`; every webview action goes through `runMenuAction` / `reportActionError`.
 
 ### Shortcut Labels
 

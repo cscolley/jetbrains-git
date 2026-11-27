@@ -8,6 +8,7 @@ Releases before 1.0.0 are archived in [CHANGELOG-archive.md](https://github.com/
 
 ### Added
 
+- **Shelf toolbar** — The Shelf tab now has a toolbar like the JetBrains Shelf window: Unshelve, Restore (keeps the shelf), Create Patch, Copy as Patch to Clipboard, Delete, Import Patches and Import Patches from Clipboard. Click a shelf to select it; the shelf actions are disabled until one is selected.
 - **Update method** — `jgc.update.method` (`merge`, `rebase` or `branchDefault`) decides how Update Project, Pull and branch updates integrate upstream changes, and `jgc.update.saveChangesPolicy` (`stash` or `shelve`) decides how local changes are carried across the update.
 - **Smart checkout** — Checking out a branch, tag or commit, or creating a branch, no longer fails on a dirty working tree: a prompt offers Smart (stash, switch, restore), Force (discard, with a second confirmation) or Cancel. Untracked files that would be overwritten are explained instead of offering a destructive option.
 - **Stash options** — Stash Changes... (keep index, include untracked), Unstash As... (as a new branch, pop, reinstate index) and Clear All Stashes... from the Stash tab toolbar.
@@ -25,6 +26,7 @@ Releases before 1.0.0 are archived in [CHANGELOG-archive.md](https://github.com/
 - **Go To Hash / Branch / Tag** — Cmd+Shift+L (Ctrl+Shift+L) finds a commit by hash, branch or tag, loading more history until it appears and lifting any filter that hides it. Ctrl+L focuses the filter box.
 - **Interactive rebase** — Interactively Rebase from Here... on any commit opens a dialog with per-commit pick / reword / edit / squash / fixup / drop, reordering, `--onto`, autosquash, keep-empty, update-refs and rebase-merges.
 - **Edit Commit Message, Fixup and Squash Into** — on a commit's context menu.
+- **Changelists** — Group unstaged changes into named lists in the Commit panel, like IDEA's Changes view. Create, rename, delete and Set Active from a list's right-click menu or the New Changelist toolbar button; new changes land in the active list. Drag files (or a whole selection) onto a list, or use Move to Another Changelist... from a file or folder menu. Shelve Changelist... shelves just that list's files. After a partial commit, an offer moves the files you left behind into a new list (`jgc.changelists.offerMoveOnPartialCommit`). The Changes view gets a Changelist grouping. Lists are stored per worktree inside the git directory, never in the repository, and the Staged group, Unversioned Files and Merge Conflicts behave as before. `jgc.changelists.enabled` turns the feature off.
 
 ### Improved
 
@@ -34,6 +36,7 @@ Releases before 1.0.0 are archived in [CHANGELOG-archive.md](https://github.com/
 
 - A hook-declined push no longer offers Merge / Rebase as if it were a rejected push.
 - Amend-and-push is checked against the protected branches before the commit is rewritten.
+- Rollbacks and gutter-block commits now clear changelist assignments for changes they resolve.
 
 ## [1.2.0] - 2026-11-14
 
@@ -179,7 +182,7 @@ Releases before 1.0.0 are archived in [CHANGELOG-archive.md](https://github.com/
 
 ### Improved
 
-- **Renamed to JetBrains Git Control** — Short brand JGC; the extension ID changed from `idea-like-git-graph` to `jetbrains-git-control`.
+- **Renamed to JetBrains Git** — Short brand JGC; the extension ID changed from `idea-like-git-graph` to `jetbrains-git-control`.
 
 ### Fixed
 

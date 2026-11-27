@@ -1,6 +1,12 @@
 import { create } from "zustand";
 import { bridge, reportActionError } from "../bridge";
+import {
+  isChangelistsInfo,
+  type PartialCommitOffer,
+  partialCommitOffers,
+} from "../changelists";
 import type { SelectionMode } from "../hooks/useModifierClickSelection";
+import { type ChangelistsInfo, DEFAULT_CHANGELIST_ID } from "../types/git";
 
 export interface WorkingTreeFile {
   path: string;
@@ -13,6 +19,8 @@ export interface WorkingTreeFile {
     | "untracked"
     | "conflicted";
   staged: boolean;
+  /** Id of the changelist the file is in; unset for unversioned and conflicted files. */
+  changelist?: string;
 }
 
 export interface ShelveEntry {
@@ -72,6 +80,11 @@ interface CommitStore {
   showUnversioned: boolean;
   /** Collapsed directory paths in tree view */
   collapsedDirs: Set<string>;
+
+  // Changelists (null until the host has answered, or when it has none to offer)
+  changelists: ChangelistsInfo | null;
+  /** Ids of collapsed changelist groups; a new list starts expanded. */
+  collapsedChangelists: Set<string>;
 
   // AI commit message
   aiGenerating: boolean;
@@ -135,6 +148,46 @@ interface CommitStore {
   cancelCommitMessage: () => Promise<void>;
   chooseAiModel: () => Promise<void>;
   refresh: () => Promise<void>;
+  /** Resolves the new list's id, or null when the user backed out or it failed. */
+  createChangelist: (filePaths?: string[]) => Promise<string | null>;
+  renameChangelist: (id: string) => Promise<void>;
+  deleteChangelist: (id: string) => Promise<void>;
+  setActiveChangelist: (id: string) => Promise<void>;
+  moveToChangelist: (id: string, filePaths: string[]) => Promise<void>;
+  /** Ask which list (or a new one) `filePaths` should move to. */
+  promptMoveToChangelist: (filePaths: string[]) => Promise<void>;
+  shelveChangelist: (id: string) => Promise<void>;
+  toggleChangelistGroup: (id: string) => void;
+  expandAllChangelists: () => void;
+  collapseAllChangelists: (ids: string[]) => void;
+  /** After a partial commit, offer to move what was left behind to a new list. */
+  offerMoveRemaining: (offers: PartialCommitOffer[]) => Promise<void>;
+}
+
+const NEW_CHANGELIST_ITEM = "$(add) New Changelist...";
+
+/** A blank answer is treated like Escape: the host rejects empty names anyway. */
+async function promptChangelistName(
+  prompt: string,
+  value?: string,
+): Promise<string | null> {
+  const answer = (await bridge.request("showInputBox", {
+    prompt,
+    value,
+    placeHolder: "Changelist name",
+  })) as { value?: string | null } | undefined;
+  const name = answer?.value?.trim();
+  return name ? name : null;
+}
+
+async function fetchChangelistInfo(): Promise<ChangelistsInfo | null> {
+  try {
+    const info = await bridge.request("getChangelists");
+    return isChangelistsInfo(info) ? info : null;
+  } catch {
+    // Changelists are an overlay: without them the panel shows one "Changes" group.
+    return null;
+  }
 }
 
 export const useCommitStore = create<CommitStore>((set, get) => ({
@@ -154,15 +207,18 @@ export const useCommitStore = create<CommitStore>((set, get) => ({
   groupByDirectory: true,
   showUnversioned: true,
   collapsedDirs: new Set<string>(),
+  changelists: null,
+  collapsedChangelists: new Set<string>(),
   aiGenerating: false,
 
   async fetchChanges() {
     set({ loading: true });
     const start = Date.now();
     try {
-      const result = (await bridge.request(
-        "getWorkingTreeChanges",
-      )) as WorkingTreeFile[];
+      const [result, changelists] = await Promise.all([
+        bridge.request("getWorkingTreeChanges") as Promise<WorkingTreeFile[]>,
+        fetchChangelistInfo(),
+      ]);
       if (Array.isArray(result)) {
         const newPaths = new Set(result.map((f) => `${f.path}:${f.staged}`));
         const { selectedFiles, highlightedFiles, changes } = get();
@@ -177,17 +233,18 @@ export const useCommitStore = create<CommitStore>((set, get) => ({
           // First load — no auto-selection (user manually selects files)
           set({
             changes: result,
+            changelists,
             selectedFiles: new Set<string>(),
             highlightedFiles: new Set<string>(),
             lastHighlightedKey: null,
             highlightedShelfId: null,
-            highlightedIdeaShelfName: null,
           });
         } else {
           // Refresh — preserve user's selection state (only keep existing selections)
           const anchor = get().lastHighlightedKey;
           set({
             changes: result,
+            changelists,
             selectedFiles: keepExisting(selectedFiles),
             highlightedFiles: keepExisting(highlightedFiles),
             lastHighlightedKey: anchor && newPaths.has(anchor) ? anchor : null,
@@ -341,8 +398,9 @@ export const useCommitStore = create<CommitStore>((set, get) => ({
   },
 
   async commit() {
-    const { commitMessage, amend, changes, selectedFiles } = get();
+    const { commitMessage, amend, changes, selectedFiles, changelists } = get();
     if (!commitMessage.trim()) return false;
+    const offers = partialCommitOffers(changes, selectedFiles, changelists);
 
     // Get selected file paths (only unstaged ones need to be staged). A rename
     // is two index changes — old path deleted, new path added — so both sides
@@ -370,6 +428,7 @@ export const useCommitStore = create<CommitStore>((set, get) => ({
       if (result?.cancelled) return false;
       set({ commitMessage: "", amend: false });
       await get().fetchChanges();
+      void get().offerMoveRemaining(offers);
       return true;
     } catch (err) {
       await reportActionError("commit", err);
@@ -380,8 +439,9 @@ export const useCommitStore = create<CommitStore>((set, get) => ({
   },
 
   async commitAndPush() {
-    const { commitMessage, amend, changes, selectedFiles } = get();
+    const { commitMessage, amend, changes, selectedFiles, changelists } = get();
     if (!commitMessage.trim()) return false;
+    const offers = partialCommitOffers(changes, selectedFiles, changelists);
 
     const filesToStage = changes
       .filter((f) => !f.staged && selectedFiles.has(`${f.path}:${f.staged}`))
@@ -401,6 +461,7 @@ export const useCommitStore = create<CommitStore>((set, get) => ({
       if (result?.cancelled) return false;
       set({ commitMessage: "", amend: false });
       await get().fetchChanges();
+      void get().offerMoveRemaining(offers);
       return true;
     } catch (err) {
       await reportActionError("commitAndPush", err);
@@ -505,11 +566,11 @@ export const useCommitStore = create<CommitStore>((set, get) => ({
   },
 
   highlightShelf(id: string) {
-    set({ highlightedShelfId: id });
+    set({ highlightedShelfId: id, highlightedIdeaShelfName: null });
   },
 
   highlightIdeaShelf(name: string) {
-    set({ highlightedIdeaShelfName: name });
+    set({ highlightedIdeaShelfName: name, highlightedShelfId: null });
   },
 
   async shelveChanges(message?: string, filePaths?: string[]) {
@@ -598,7 +659,15 @@ export const useCommitStore = create<CommitStore>((set, get) => ({
         "getIdeaShelves",
       )) as IdeaShelfEntry[];
       if (Array.isArray(result)) {
-        set({ ideaShelves: result });
+        const { highlightedIdeaShelfName } = get();
+        set({
+          ideaShelves: result,
+          highlightedIdeaShelfName: result.some(
+            (shelf) => shelf.name === highlightedIdeaShelfName,
+          )
+            ? highlightedIdeaShelfName
+            : null,
+        });
       }
     } catch (err) {
       await reportActionError("fetchIdeaShelves", err);
@@ -691,6 +760,193 @@ export const useCommitStore = create<CommitStore>((set, get) => ({
 
   toggleShowUnversioned() {
     set({ showUnversioned: !get().showUnversioned });
+  },
+
+  async createChangelist(filePaths?: string[]) {
+    try {
+      const name = await promptChangelistName("New changelist name");
+      if (name === null) return null;
+      const result = (await bridge.request("createChangelist", {
+        name,
+        filePaths,
+      })) as { id?: string } | undefined;
+      await get().fetchChanges();
+      return result?.id ?? null;
+    } catch (err) {
+      await reportActionError("Create changelist", err);
+      return null;
+    }
+  },
+
+  async renameChangelist(id: string) {
+    const current = get().changelists?.lists.find((list) => list.id === id);
+    if (!current) return;
+    try {
+      const name = await promptChangelistName(
+        "Rename changelist",
+        current.name,
+      );
+      if (name === null || name === current.name) return;
+      await bridge.request("renameChangelist", { id, name });
+      await get().fetchChanges();
+    } catch (err) {
+      await reportActionError("Rename changelist", err);
+    }
+  },
+
+  async deleteChangelist(id: string) {
+    const { changelists, changes } = get();
+    const list = changelists?.lists.find((l) => l.id === id);
+    if (!list || id === DEFAULT_CHANGELIST_ID) return;
+    try {
+      const count = new Set(
+        changes.filter((f) => f.changelist === id).map((f) => f.path),
+      ).size;
+      if (count > 0) {
+        const fallback =
+          changelists?.lists.find((l) => l.id === DEFAULT_CHANGELIST_ID)
+            ?.name ?? "Changes";
+        const answer = (await bridge.request("showConfirmMessage", {
+          message: `Delete changelist "${list.name}"? Its ${count} ${count === 1 ? "file moves" : "files move"} to "${fallback}".`,
+          confirmLabel: "Delete",
+        })) as { confirmed?: boolean } | undefined;
+        if (!answer?.confirmed) return;
+      }
+      await bridge.request("deleteChangelist", { id });
+      await get().fetchChanges();
+    } catch (err) {
+      await reportActionError("Delete changelist", err);
+    }
+  },
+
+  async setActiveChangelist(id: string) {
+    try {
+      await bridge.request("setActiveChangelist", { id });
+      await get().fetchChanges();
+    } catch (err) {
+      await reportActionError("Set active changelist", err);
+    }
+  },
+
+  async moveToChangelist(id: string, filePaths: string[]) {
+    if (filePaths.length === 0) return;
+    try {
+      await bridge.request("moveToChangelist", { id, filePaths });
+      await get().fetchChanges();
+    } catch (err) {
+      await reportActionError("Move to changelist", err);
+    }
+  },
+
+  async promptMoveToChangelist(filePaths: string[]) {
+    const info = get().changelists;
+    if (!info || filePaths.length === 0) return;
+    try {
+      const answer = (await bridge.request("showQuickPick", {
+        items: [...info.lists.map((list) => list.name), NEW_CHANGELIST_ITEM],
+        placeHolder: `Move ${filePaths.length} ${filePaths.length === 1 ? "file" : "files"} to changelist`,
+      })) as { value?: string | null } | undefined;
+      const picked = answer?.value;
+      if (!picked) return;
+      if (picked === NEW_CHANGELIST_ITEM) {
+        await get().createChangelist(filePaths);
+        return;
+      }
+      const target = info.lists.find((list) => list.name === picked);
+      if (target) await get().moveToChangelist(target.id, filePaths);
+    } catch (err) {
+      await reportActionError("Move to changelist", err);
+    }
+  },
+
+  async shelveChangelist(id: string) {
+    const list = get().changelists?.lists.find((l) => l.id === id);
+    if (!list) return;
+    const changes = get().changes;
+    const stagedPaths = new Set(
+      changes.filter((file) => file.staged).map((file) => file.path),
+    );
+    const mixedPaths = [
+      ...new Set(
+        changes
+          .filter(
+            (file) =>
+              file.changelist === id &&
+              !file.staged &&
+              stagedPaths.has(file.path),
+          )
+          .map((file) => file.path),
+      ),
+    ];
+    if (mixedPaths.length > 0) {
+      await reportActionError(
+        "Shelve changelist",
+        new Error(
+          `Cannot shelve files with staged changes: ${mixedPaths.join(", ")}. Unstage them first.`,
+        ),
+      );
+      return;
+    }
+    const paths = [
+      ...new Set(
+        changes
+          .filter((file) => file.changelist === id && !file.staged)
+          .map((file) => file.path),
+      ),
+    ];
+    // Always an explicit list: without one the host shelves the whole worktree.
+    if (paths.length === 0) return;
+    await get().ideaShelveChanges(list.name, paths);
+  },
+
+  toggleChangelistGroup(id: string) {
+    const next = new Set(get().collapsedChangelists);
+    if (next.has(id)) {
+      next.delete(id);
+    } else {
+      next.add(id);
+    }
+    set({ collapsedChangelists: next });
+  },
+
+  expandAllChangelists() {
+    set({ collapsedChangelists: new Set() });
+  },
+
+  collapseAllChangelists(ids: string[]) {
+    set({ collapsedChangelists: new Set(ids) });
+  },
+
+  async offerMoveRemaining(offers: PartialCommitOffer[]) {
+    for (const offer of offers) {
+      try {
+        // Only what is still changed and still in that list: the commit and the
+        // refresh that followed may have settled some of it already.
+        const remaining = [
+          ...new Set(
+            get()
+              .changes.filter(
+                (f) =>
+                  f.changelist === offer.listId &&
+                  offer.leftover.includes(f.path),
+              )
+              .map((f) => f.path),
+          ),
+        ];
+        if (remaining.length === 0) continue;
+
+        const move = `$(arrow-right) Move ${remaining.length} remaining ${remaining.length === 1 ? "file" : "files"} to a new changelist...`;
+        const answer = (await bridge.request("showQuickPick", {
+          items: [move, `Keep in "${offer.listName}"`],
+          placeHolder: `You committed part of "${offer.listName}". What should happen to the rest?`,
+        })) as { value?: string | null } | undefined;
+        if (answer?.value === move) {
+          await get().createChangelist(remaining);
+        }
+      } catch (err) {
+        await reportActionError("Move remaining changes", err);
+      }
+    }
   },
 
   /**
