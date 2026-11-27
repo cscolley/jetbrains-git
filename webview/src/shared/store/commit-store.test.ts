@@ -46,6 +46,47 @@ describe("commit-store when the user backs out of a pre-commit warning", () => {
   });
 });
 
+describe("commit-store IDEA shelf selection", () => {
+  beforeEach(() => {
+    mockBridgeRequest.mockReset();
+    useCommitStore.setState({
+      changes: [],
+      highlightedIdeaShelfName: "selected",
+      ideaShelves: [],
+      loading: false,
+    });
+  });
+
+  it("preserves selection on working-tree refresh and clears it when the shelf disappears", async () => {
+    const shelf = {
+      name: "selected",
+      description: "",
+      date: "",
+      patchPath: "",
+      files: [],
+    };
+    mockBridgeRequest.mockImplementation(async (command: string) => {
+      if (command === "getWorkingTreeChanges") return [];
+      if (command === "getChangelists") return null;
+      if (command === "getIdeaShelves") return [shelf];
+      return undefined;
+    });
+
+    await useCommitStore.getState().fetchChanges();
+    expect(useCommitStore.getState().highlightedIdeaShelfName).toBe("selected");
+
+    await useCommitStore.getState().fetchIdeaShelves();
+    expect(useCommitStore.getState().highlightedIdeaShelfName).toBe("selected");
+
+    mockBridgeRequest.mockImplementation(async (command: string) => {
+      if (command === "getIdeaShelves") return [];
+      return undefined;
+    });
+    await useCommitStore.getState().fetchIdeaShelves();
+    expect(useCommitStore.getState().highlightedIdeaShelfName).toBeNull();
+  });
+});
+
 describe("commit-store changelists", () => {
   const lists = [
     { id: "default", name: "Changes" },

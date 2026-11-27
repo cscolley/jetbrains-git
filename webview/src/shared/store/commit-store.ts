@@ -238,7 +238,6 @@ export const useCommitStore = create<CommitStore>((set, get) => ({
             highlightedFiles: new Set<string>(),
             lastHighlightedKey: null,
             highlightedShelfId: null,
-            highlightedIdeaShelfName: null,
           });
         } else {
           // Refresh — preserve user's selection state (only keep existing selections)
