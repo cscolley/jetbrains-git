@@ -1343,6 +1343,7 @@ export function activate(context: vscode.ExtensionContext) {
         }
       }
 
+      await forgetResolvedPaths(gitService, filePaths);
       messageRouter.broadcastEvent("commitStateChanged", {});
       rollbackPanel.close();
       return { success: true };

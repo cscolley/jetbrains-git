@@ -12,6 +12,7 @@ import {
 } from "../decorations/markerCard";
 import { hoverFor } from "../decorations/markerHover";
 import type { MarkerPopup } from "../decorations/markerPopup";
+import { withChangelistCleanup } from "./changelists";
 
 /** Command ids, as contributed in `package.json`. */
 export const MARKER_COMMANDS = {
@@ -286,10 +287,12 @@ export function registerMarkerActions(deps: {
         );
         const basename = path.basename(fresh.uri.fsPath);
         try {
-          const commit = await fresh.repo.service.commitBlockChange(
-            path.relative(fresh.repo.root, fresh.uri.fsPath),
-            content,
-            message,
+          const commit = await withChangelistCleanup(fresh.repo.service, () =>
+            fresh.repo.service.commitBlockChange(
+              path.relative(fresh.repo.root, fresh.uri.fsPath),
+              content,
+              message,
+            ),
           );
           log(`marker commit: ${commit} (${basename})`);
           deps.popup?.()?.close();

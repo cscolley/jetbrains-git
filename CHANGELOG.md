@@ -36,6 +36,7 @@ Releases before 1.0.0 are archived in [CHANGELOG-archive.md](https://github.com/
 
 - A hook-declined push no longer offers Merge / Rebase as if it were a rejected push.
 - Amend-and-push is checked against the protected branches before the commit is rewritten.
+- Rollbacks and gutter-block commits now clear changelist assignments for changes they resolve.
 
 ## [1.2.0] - 2026-11-14
 
