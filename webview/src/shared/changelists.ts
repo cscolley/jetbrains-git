@@ -123,12 +123,21 @@ export function partialCommitOffers(
 ): PartialCommitOffer[] {
   if (!info?.enabled || !info.offerMoveOnPartialCommit) return [];
 
+  const excluded = new Set(
+    changes
+      .filter((file) => file.staged && !selectedFiles.has(`${file.path}:true`))
+      .flatMap((file) => (file.oldPath ? [file.path, file.oldPath] : [file.path])),
+  );
   const checked = new Set<string>();
   const byList = new Map<string, Set<string>>();
   for (const file of changes) {
     if (file.changelist === undefined) continue;
-    if (selectedFiles.has(`${file.path}:${file.staged}`))
+    if (
+      selectedFiles.has(`${file.path}:${file.staged}`) &&
+      !excluded.has(file.path)
+    ) {
       checked.add(file.path);
+    }
     const paths = byList.get(file.changelist) ?? new Set<string>();
     paths.add(file.path);
     byList.set(file.changelist, paths);
