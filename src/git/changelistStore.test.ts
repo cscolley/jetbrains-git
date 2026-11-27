@@ -80,6 +80,28 @@ describe("ChangelistStore", () => {
     assert.equal((await store.read()).lists.length, 21);
   });
 
+  it("serialises updates and transforms across independent stores", async () => {
+    const file = path.join(dir, "independent-race.json");
+    const stores = [new ChangelistStore(file), new ChangelistStore(file)];
+    await Promise.all(
+      Array.from({ length: 20 }, (_, index) =>
+        index % 2 === 0
+          ? stores[index % stores.length].update((state) =>
+              createChangelist(state, `List ${index}`, {
+                id: `list-${index}`,
+              }),
+            )
+          : stores[index % stores.length].transform((state) =>
+              reconcile(state, [{ path: `file-${index}` }], 1),
+            ),
+      ),
+    );
+
+    const state = await stores[0].read();
+    assert.equal(state.lists.length, 11);
+    assert.equal(state.assignments.size, 10);
+  });
+
   it("a failed update does not wedge the queue", async () => {
     const store = new ChangelistStore(path.join(dir, "wedge.json"));
     await assert.rejects(

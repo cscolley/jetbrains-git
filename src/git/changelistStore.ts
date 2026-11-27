@@ -8,6 +8,7 @@
 
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
+import { lock } from "proper-lockfile";
 import {
   type ChangelistResult,
   type ChangelistState,
@@ -52,12 +53,15 @@ export class ChangelistStore {
   update<R extends ChangelistResult>(
     change: (state: ChangelistState) => R,
   ): Promise<R> {
-    const run = this.queue.then(async () => {
-      const before = await this.read();
-      const result = change(before);
-      if (result.ok && result.state !== before) await this.write(result.state);
-      return result;
-    });
+    const run = this.queue.then(() =>
+      this.withLock(async () => {
+        const before = await this.read();
+        const result = change(before);
+        if (result.ok && result.state !== before)
+          await this.write(result.state);
+        return result;
+      }),
+    );
     // A failed write must not wedge every later update.
     this.queue = run.catch(() => undefined);
     return run;
@@ -70,14 +74,29 @@ export class ChangelistStore {
   transform(
     change: (state: ChangelistState) => ChangelistState,
   ): Promise<ChangelistState> {
-    const run = this.queue.then(async () => {
-      const before = await this.read();
-      const after = change(before);
-      if (after !== before) await this.write(after);
-      return after;
-    });
+    const run = this.queue.then(() =>
+      this.withLock(async () => {
+        const before = await this.read();
+        const after = change(before);
+        if (after !== before) await this.write(after);
+        return after;
+      }),
+    );
     this.queue = run.catch(() => undefined);
     return run;
+  }
+
+  private async withLock<R>(operation: () => Promise<R>): Promise<R> {
+    await fs.mkdir(path.dirname(this.file), { recursive: true });
+    const release = await lock(this.file, {
+      realpath: false,
+      retries: { retries: 100, minTimeout: 10, maxTimeout: 100 },
+    });
+    try {
+      return await operation();
+    } finally {
+      await release();
+    }
   }
 
   private async write(state: ChangelistState): Promise<void> {
