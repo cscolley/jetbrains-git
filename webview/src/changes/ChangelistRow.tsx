@@ -21,7 +21,16 @@ export function ChangelistRow({
     <div
       className={`changes-row changes-row-dir${active ? " changes-row-active" : ""}`}
       style={{ paddingLeft: 6 + depth * 12 }}
+      role="button"
+      tabIndex={0}
+      aria-expanded={!collapsed}
       onClick={onToggle}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onToggle();
+        }
+      }}
       title={`${label} — ${count} ${count === 1 ? "file" : "files"}`}
     >
       <span className="changes-chevron">
