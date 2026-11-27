@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { reportActionError } from "../bridge";
 import { useCommitStore, type WorkingTreeFile } from "./commit-store";
 
 const mockBridgeRequest = vi.fn();
@@ -80,6 +81,7 @@ describe("commit-store changelists", () => {
 
   beforeEach(() => {
     mockBridgeRequest.mockReset();
+    vi.mocked(reportActionError).mockClear();
     useCommitStore.setState({
       commitMessage: "",
       amend: false,
@@ -111,12 +113,13 @@ describe("commit-store changelists", () => {
     expect(useCommitStore.getState().changelists).toBeNull();
   });
 
-  it("shelves a changelist with its own files, never the whole worktree", async () => {
+  it("shelves only unstaged changelist files, never the whole worktree", async () => {
     useCommitStore.setState({
       changes: [
         tracked("a.ts", "fix"),
         tracked("b.ts", "default"),
         tracked("c.ts", "fix"),
+        { ...tracked("staged.ts", "fix"), staged: true },
       ],
     });
     const calls = routeBridge({
@@ -130,6 +133,27 @@ describe("commit-store changelists", () => {
       message: "Bug fix",
       filePaths: ["a.ts", "c.ts"],
     });
+  });
+
+  it("rejects shelving a changelist that contains a mixed staged file", async () => {
+    useCommitStore.setState({
+      changes: [
+        tracked("mixed.ts", "fix"),
+        { ...tracked("mixed.ts", "fix"), staged: true },
+        tracked("safe.ts", "fix"),
+      ],
+    });
+    const calls = routeBridge({});
+
+    await useCommitStore.getState().shelveChangelist("fix");
+
+    expect(calls).toEqual([]);
+    expect(reportActionError).toHaveBeenCalledWith(
+      "Shelve changelist",
+      expect.objectContaining({
+        message: expect.stringContaining("mixed.ts"),
+      }),
+    );
   });
 
   it("does not shelve an empty changelist", async () => {

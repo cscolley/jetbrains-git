@@ -863,11 +863,36 @@ export const useCommitStore = create<CommitStore>((set, get) => ({
   async shelveChangelist(id: string) {
     const list = get().changelists?.lists.find((l) => l.id === id);
     if (!list) return;
+    const changes = get().changes;
+    const stagedPaths = new Set(
+      changes.filter((file) => file.staged).map((file) => file.path),
+    );
+    const mixedPaths = [
+      ...new Set(
+        changes
+          .filter(
+            (file) =>
+              file.changelist === id &&
+              !file.staged &&
+              stagedPaths.has(file.path),
+          )
+          .map((file) => file.path),
+      ),
+    ];
+    if (mixedPaths.length > 0) {
+      await reportActionError(
+        "Shelve changelist",
+        new Error(
+          `Cannot shelve files with staged changes: ${mixedPaths.join(", ")}. Unstage them first.`,
+        ),
+      );
+      return;
+    }
     const paths = [
       ...new Set(
-        get()
-          .changes.filter((f) => f.changelist === id)
-          .map((f) => f.path),
+        changes
+          .filter((file) => file.changelist === id && !file.staged)
+          .map((file) => file.path),
       ),
     ];
     // Always an explicit list: without one the host shelves the whole worktree.
