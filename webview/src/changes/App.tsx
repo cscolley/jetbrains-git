@@ -340,7 +340,8 @@ export function ChangesApp() {
         </Tooltip>
       </div>
 
-      {state.files.length === 0 && sections.length <= 1 ? (
+      {state.files.length === 0 &&
+      !sections.some((section) => section.header !== null) ? (
         <div className="changes-empty">
           {baseLabel && <div className="changes-group-title">{baseLabel}</div>}
           <div>No changes</div>
